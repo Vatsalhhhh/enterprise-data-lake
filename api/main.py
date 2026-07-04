@@ -7,6 +7,7 @@ OPENAI_API_KEY is set, deterministic template fallback otherwise).
 """
 from __future__ import annotations
 
+import math
 import os
 import sys
 
@@ -43,11 +44,31 @@ class AnalyzeRequest(BaseModel):
     question: str
 
 
+def _safe_records(df: pd.DataFrame) -> list[dict]:
+    """Converts a DataFrame to JSON-safe records, mapping NaN/NaT to None.
+
+    df.where(pd.notna(df), None) is not reliable for this: on a float64
+    column, assigning None back through .where() gets silently re-cast to
+    NaN instead of upcasting the column to object dtype, so a genuinely
+    missing value (e.g. an inventory SKU with no stock on hand, so no
+    computable turnover ratio) survives as NaN and crashes Starlette's
+    JSON encoder (which disallows NaN) with a 500. Scanning the already
+    materialized records and swapping NaN floats for None directly
+    sidesteps that dtype behavior entirely.
+    """
+    records = df.to_dict(orient="records")
+    for record in records:
+        for key, value in record.items():
+            if isinstance(value, float) and math.isnan(value):
+                record[key] = None
+    return records
+
+
 def _query_to_records(sql: str) -> list[dict]:
     engine = get_engine()
     with engine.connect() as conn:
         df = pd.read_sql(text(sql), conn)
-    return df.where(pd.notna(df), None).to_dict(orient="records")
+    return _safe_records(df)
 
 
 @app.get("/")
@@ -101,7 +122,7 @@ def revenue_vs_hr_cost(department: str | None = None, region: str | None = None)
         engine = get_engine()
         with engine.connect() as conn:
             df = pd.read_sql(text(sql), conn, params=params)
-        return df.where(pd.notna(df), None).to_dict(orient="records")
+        return _safe_records(df)
 
     sql = "SELECT department, month_start, hr_cost, gl_revenue, cogs, gross_margin FROM vw_revenue_vs_hr_cost"
     params = {}
@@ -112,7 +133,7 @@ def revenue_vs_hr_cost(department: str | None = None, region: str | None = None)
     engine = get_engine()
     with engine.connect() as conn:
         df = pd.read_sql(text(sql), conn, params=params)
-    return df.where(pd.notna(df), None).to_dict(orient="records")
+    return _safe_records(df)
 
 
 @app.get("/views/marketing-vs-sales")
@@ -126,7 +147,7 @@ def marketing_vs_sales(region: str | None = None):
     engine = get_engine()
     with engine.connect() as conn:
         df = pd.read_sql(text(sql), conn, params=params)
-    return df.where(pd.notna(df), None).to_dict(orient="records")
+    return _safe_records(df)
 
 
 @app.get("/views/inventory-turns")
@@ -143,7 +164,7 @@ def inventory_turns(sku: str | None = None, region: str | None = None):
     engine = get_engine()
     with engine.connect() as conn:
         df = pd.read_sql(text(sql), conn, params=params)
-    return df.where(pd.notna(df), None).to_dict(orient="records")
+    return _safe_records(df)
 
 
 @app.get("/views/department-pnl")
@@ -157,7 +178,7 @@ def department_pnl(department: str | None = None):
     engine = get_engine()
     with engine.connect() as conn:
         df = pd.read_sql(text(sql), conn, params=params)
-    return df.where(pd.notna(df), None).to_dict(orient="records")
+    return _safe_records(df)
 
 
 @app.post("/analyze")

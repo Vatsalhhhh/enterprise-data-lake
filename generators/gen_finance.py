@@ -98,7 +98,6 @@ def gen_gl_transactions(revenue_df: pd.DataFrame):
                     "Sales": 0.45, "Marketing": 0.15, "Operations": 0.15,
                     "Engineering": 0.10, "Customer Support": 0.10, "Finance": 0.05,
                 }[dept]
-                dept_revenue = region_rev * dept_share / len(REGION_CODES) * len(REGION_CODES)  # already per-region
                 dept_revenue = region_rev * dept_share
 
                 cogs_rate = 0.42
@@ -119,7 +118,12 @@ def gen_gl_transactions(revenue_df: pd.DataFrame):
                              "amount": round(-cogs, 2)})
                 txn_id += 1
 
-                # A handful of opex postings per department/month/account
+                # A handful of opex postings per department/month/account.
+                # BASE_DEPT_BUDGET_MONTHLY is a company-wide monthly figure
+                # per department (gen_budgets() posts it once per dept/month,
+                # not per region), but this loop posts once per region, so
+                # each per-account amount must be split across regions to
+                # avoid overcounting total department opex by len(REGION_CODES)x.
                 for code, name in GL_ACCOUNTS[2:]:
                     base_amt = {
                         "6000": BASE_DEPT_BUDGET_MONTHLY[dept] * 0.55,
@@ -127,7 +131,7 @@ def gen_gl_transactions(revenue_df: pd.DataFrame):
                         "6200": BASE_DEPT_BUDGET_MONTHLY[dept] * 0.08,
                         "6300": BASE_DEPT_BUDGET_MONTHLY[dept] * 0.06,
                         "6400": BASE_DEPT_BUDGET_MONTHLY[dept] * 0.03,
-                    }[code]
+                    }[code] / len(REGION_CODES)
                     amt = base_amt * np.random.uniform(0.85, 1.15)
                     rows.append({"txn_id": f"GL-{txn_id:07d}", "department": dept, "region_code": region,
                                  "month": month.isoformat(), "account_code": code, "account_name": name,

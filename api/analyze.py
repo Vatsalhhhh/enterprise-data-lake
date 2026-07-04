@@ -17,6 +17,7 @@ numbers that were actually returned by a SQL query against the warehouse.
 """
 from __future__ import annotations
 
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -43,6 +44,28 @@ class AnalysisResult:
     sql: str = ""
     answer: str = ""
     data_preview: list = field(default_factory=list)
+
+
+def _safe_records(df: pd.DataFrame) -> list:
+    """Converts a DataFrame to JSON-safe records, mapping NaN/NaT to None.
+
+    Standard JSON has no NaN literal, so a view with legitimately missing
+    data (e.g. AVG() over a SKU that's had zero stock all period, so its
+    turnover ratio is undefined) would otherwise crash the API's JSON
+    encoder with a 500 rather than just reporting the row as unknown.
+
+    df.where(pd.notnull(df), None) is not reliable for this: on a float64
+    column, assigning None back through .where() gets silently re-cast to
+    NaN rather than upcasting the column to object dtype. Scanning the
+    already-materialized records and swapping NaN floats for None directly
+    sidesteps that dtype behavior entirely.
+    """
+    records = df.to_dict(orient="records")
+    for record in records:
+        for key, value in record.items():
+            if isinstance(value, float) and math.isnan(value):
+                record[key] = None
+    return records
 
 
 def _score_view(question: str, view_key: str, meta: dict) -> int:
@@ -110,7 +133,7 @@ def _fallback_revenue_vs_hr(question: str) -> AnalysisResult:
         question=question, mode="fallback",
         views_used=["vw_revenue_vs_hr_cost"], sql=sql,
         answer="\n".join(lines),
-        data_preview=df.to_dict(orient="records"),
+        data_preview=_safe_records(df),
     )
 
 
@@ -134,7 +157,7 @@ def _fallback_marketing_vs_sales(question: str) -> AnalysisResult:
         question=question, mode="fallback",
         views_used=["vw_marketing_spend_vs_sales"], sql=sql,
         answer="\n".join(lines),
-        data_preview=df.to_dict(orient="records"),
+        data_preview=_safe_records(df),
     )
 
 
@@ -144,20 +167,22 @@ def _fallback_inventory_vs_sales(question: str) -> AnalysisResult:
         "ROUND(AVG(turnover_ratio), 3) AS avg_turnover_ratio, "
         "SUM(outbound_qty) AS total_outbound_qty "
         "FROM vw_inventory_turns_vs_sales "
-        "GROUP BY sku ORDER BY avg_turnover_ratio DESC"
+        "GROUP BY sku ORDER BY avg_turnover_ratio DESC NULLS LAST"
     )
     df = run_readonly_query(sql)
     lines = ["Inventory turnover vs sales velocity by SKU (full history):"]
     for _, row in df.iterrows():
+        ratio = row["avg_turnover_ratio"]
+        ratio_txt = f"{ratio}" if pd.notna(ratio) else "no data (no stock on hand in this period)"
         lines.append(
-            f"  - {row['sku']}: average monthly turnover ratio {row['avg_turnover_ratio']}, "
+            f"  - {row['sku']}: average monthly turnover ratio {ratio_txt}, "
             f"total outbound units {int(row['total_outbound_qty']):,}."
         )
     return AnalysisResult(
         question=question, mode="fallback",
         views_used=["vw_inventory_turns_vs_sales"], sql=sql,
         answer="\n".join(lines),
-        data_preview=df.to_dict(orient="records"),
+        data_preview=_safe_records(df),
     )
 
 
@@ -183,7 +208,7 @@ def _fallback_department_pnl(question: str) -> AnalysisResult:
         question=question, mode="fallback",
         views_used=["vw_department_pnl"], sql=sql,
         answer="\n".join(lines),
-        data_preview=df.to_dict(orient="records"),
+        data_preview=_safe_records(df),
     )
 
 
@@ -248,7 +273,7 @@ def analyze_with_llm(question: str) -> AnalysisResult:
 
     return AnalysisResult(
         question=question, mode="llm", views_used=views, sql=sql_response,
-        answer=answer, data_preview=df.to_dict(orient="records"),
+        answer=answer, data_preview=_safe_records(df),
     )
 
 

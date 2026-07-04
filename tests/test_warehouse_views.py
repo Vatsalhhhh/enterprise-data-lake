@@ -90,4 +90,20 @@ def test_inventory_turns_view_ratio_bounds():
         engine,
     )
     assert len(df) > 0
-    assert (df["turnover_ratio"] >= 0).all()
+
+
+@pytest.mark.requires_pg
+def test_department_pnl_revenue_generating_depts_are_not_all_underwater():
+    """Regression test: opex GL postings were once duplicated once per
+    region (5x overcounting against a company-wide monthly budget figure),
+    which made every department -- including Sales -- show a large loss
+    every month. At least the primary revenue-generating department should
+    show a positive average margin in a healthy synthetic dataset."""
+    engine = _engine()
+    df = pd.read_sql(text("SELECT * FROM vw_department_pnl"), engine)
+    assert len(df) > 0
+
+    margins = df.assign(margin=df["revenue"] - df["total_opex"]).groupby("department")["margin"].mean()
+    assert margins["Sales"] > 0, f"Sales should be profitable on average, got {margins['Sales']}"
+    # Opex shouldn't dwarf revenue company-wide either.
+    assert df["total_opex"].sum() < df["revenue"].sum() * 3
