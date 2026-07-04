@@ -1,0 +1,37 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.env
+*.log
+
+# data artifacts (generated locally, not committed)
+data/raw/
+data/curated/
+generators/output/
+lake/minio-data/
+warehouse/pgdata/
+*.parquet
+*.duckdb
+
+# notebooks
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# streamlit
+.streamlit/secrets.toml
